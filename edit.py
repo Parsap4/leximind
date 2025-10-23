@@ -1,4 +1,4 @@
-# edit.py - با قابلیت نمایش تمام رکوردها (Show All)
+# edit.py - با رفع مشکل عدم ذخیره کلمات جدید و قابلیت Show All
 
 import sqlite3
 import random
@@ -10,7 +10,21 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 
-DB_PATH = "flash cards.db"
+import os
+import sys
+# ... بقیه ایمپورت‌ها را دست نزنید
+
+# این قسمت مسیر دیتابیس را برای حالت عادی و حالت PyInstaller تعریف می‌کند
+if getattr(sys, 'frozen', False):
+    # اگر برنامه در حالت EXE اجرا می‌شود، مسیر را از پوشه موقت PyInstaller بگیرید
+    base_path = sys._MEIPASS
+else:
+    # اگر برنامه به صورت عادی اجرا می‌شود، مسیر فعلی فایل را بگیرید
+    base_path = os.path.abspath(os.path.dirname(__file__))
+
+DB_PATH = os.path.join(base_path, "flash cards.db")
+
+# ... بقیه کد (مانند REVIEW_INTERVALS_DAYS)
 
 
 # ======================= Database Layer =======================
@@ -18,27 +32,30 @@ class DatabaseManager:
     """مدیریت دیتابیس"""
 
     def __init__(self):
+        # اتصال باز می‌شود
         self.conn = sqlite3.connect(DB_PATH)
         self.cursor = self.conn.cursor()
 
     def add_word(self, word, meaning, initial_count):
-        """افزودن کلمه جدید با کد منحصر به فرد"""
+        """افزودن کلمه جدید با کد منحصر به فرد و ذخیره تغییرات"""
         code = self._generate_unique_code()
-        # تاریخ شروع: تاریخ امروز
         next_review_date = (datetime.now()).strftime("%Y-%m-%d 00:00:00")
         try:
-            # کلمه جدید با review_intervals=1 و count اولیه
             self.cursor.execute("""
                                 INSERT INTO my_table (code, words, meaning, review_intervals, count, last_time_review)
                                 VALUES (?, ?, ?, ?, ?, ?)
                                 """, (code, word, meaning, 1, initial_count, next_review_date))
+            # **تضمین Commit:** ذخیره فوری تغییرات در دیسک
             self.conn.commit()
             return True
         except sqlite3.IntegrityError:
             return False
+        except Exception as e:
+            print(f"Error in add_word: {e}")
+            return False
 
     def _generate_unique_code(self):
-        """تولید کد منحصر به‌فرد که در دیتابیس تکراری نباشد"""
+        """تولید کد منحصر به‌فرد"""
         while True:
             code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
             self.cursor.execute("SELECT code FROM my_table WHERE code = ?", (code,))
@@ -57,7 +74,7 @@ class DatabaseManager:
         return self.cursor.fetchall()
 
     def get_all_words(self):
-        """**تابع جدید:** دریافت تمام رکوردها از دیتابیس"""
+        """دریافت تمام رکوردها"""
         self.cursor.execute("""
                             SELECT code, words, meaning, review_intervals, count, last_time_review
                             FROM my_table
@@ -66,7 +83,7 @@ class DatabaseManager:
         return self.cursor.fetchall()
 
     def update_word(self, code, word, meaning, interval, count, last_time):
-        """به‌روزرسانی رکورد"""
+        """به‌روزرسانی رکورد و ذخیره تغییرات"""
         self.cursor.execute("""
                             UPDATE my_table
                             SET words            = ?,
@@ -76,18 +93,21 @@ class DatabaseManager:
                                 last_time_review = ?
                             WHERE code = ?
                             """, (word, meaning, interval, count, last_time, code))
+        # **تضمین Commit:** ذخیره فوری تغییرات در دیسک
         self.conn.commit()
 
     def delete_word(self, code):
-        """حذف رکورد"""
+        """حذف رکورد و ذخیره تغییرات"""
         self.cursor.execute("DELETE FROM my_table WHERE code = ?", (code,))
+        # **تضمین Commit:** ذخیره فوری تغییرات در دیسک
         self.conn.commit()
 
     def close(self):
+        """بستن اتصال دیتابیس"""
         self.conn.close()
 
 
-# ======================= Add Word Page (بدون تغییر) =======================
+# ======================= Add Word Page =======================
 class AddWordPage(QWidget):
     """صفحه افزودن کلمه جدید"""
 
@@ -202,13 +222,14 @@ class AddWordPage(QWidget):
                 self.count_spin.setValue(5)
 
             if hasattr(self.owner, "edit_page"):
-                # ریست کردن جدول جستجو پس از افزودن (به جای حذف)
                 self.owner.edit_page.table.setRowCount(0)
         else:
             QMessageBox.critical(self, "Error", "Failed to add word (possible DB issue).")
 
     def go_back_to_menu(self):
         """بازگشت به منوی درون EditMainMenu یا منوی اصلی"""
+        # بستن اتصال دیتابیس هنگام خروج از صفحه
+        self.db.close()
         if hasattr(self.owner, "stack") and hasattr(self.owner, "menu_page"):
             try:
                 self.owner.stack.setCurrentWidget(self.owner.menu_page)
@@ -256,7 +277,7 @@ class EditRemovePage(QWidget):
         """)
 
         self.search_button = QPushButton("Search")
-        self.show_all_button = QPushButton("Show All")  # **دکمه جدید**
+        self.show_all_button = QPushButton("Show All")
 
         button_style = """
             QPushButton {
@@ -273,11 +294,11 @@ class EditRemovePage(QWidget):
             }
         """
         self.search_button.setStyleSheet(button_style)
-        self.show_all_button.setStyleSheet(button_style.replace("30, 144, 255", "95, 158, 160"))  # Cadet Blue
+        self.show_all_button.setStyleSheet(button_style.replace("30, 144, 255", "95, 158, 160"))
 
         control_layout.addWidget(self.search_input)
         control_layout.addWidget(self.search_button)
-        control_layout.addWidget(self.show_all_button)  # **اضافه شدن به نوار کنترل**
+        control_layout.addWidget(self.show_all_button)
         layout.addLayout(control_layout)
         # ----------------------------------------------------
 
@@ -363,7 +384,7 @@ class EditRemovePage(QWidget):
 
         # ----------------- اتصال سیگنال‌ها -----------------
         self.search_button.clicked.connect(self.perform_search)
-        self.show_all_button.clicked.connect(self.show_all_records)  # **اتصال جدید**
+        self.show_all_button.clicked.connect(self.show_all_records)
         self.edit_button.clicked.connect(self.apply_changes)
         self.delete_button.clicked.connect(self.delete_selected)
         self.back_button.clicked.connect(self.go_back_to_menu)
@@ -394,7 +415,7 @@ class EditRemovePage(QWidget):
 
     def show_all_records(self):
         """نمایش تمام رکوردها در جدول"""
-        self.search_input.clear()  # پاک کردن فیلد جستجو
+        self.search_input.clear()
         all_records = self.db.get_all_words()
         self.populate_table(all_records)
 
@@ -434,6 +455,8 @@ class EditRemovePage(QWidget):
                 QMessageBox.critical(self, "Error", f"Failed to delete record: {e}")
 
     def go_back_to_menu(self):
+        # بستن اتصال دیتابیس هنگام خروج از صفحه
+        self.db.close()
         if hasattr(self.owner, "stack") and hasattr(self.owner, "menu_page"):
             try:
                 self.owner.stack.setCurrentWidget(self.owner.menu_page)
@@ -444,7 +467,7 @@ class EditRemovePage(QWidget):
             self.main_window.stack.setCurrentWidget(self.main_window.main_menu)
 
 
-# ======================= Menu Page (Switcher) (بدون تغییر) =======================
+# ======================= Menu Page (Switcher) =======================
 class EditMainMenu(QWidget):
     """صفحه انتخاب Add یا Edit"""
 

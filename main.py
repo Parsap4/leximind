@@ -1,9 +1,9 @@
-# main.py - کد نهایی با تاریخ و دکمه About فقط در منوی اصلی
+# main.py - کد نهایی با تاریخ و دکمه About فقط در منوی اصلی و بستن ایمن دیتابیس
 
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QPushButton, QVBoxLayout, QStackedWidget,
-    QHBoxLayout, QDialog, QLabel, QTextEdit, QGridLayout
+    QDialog, QLabel, QTextEdit, QGridLayout
 )
 from PyQt5.QtCore import Qt, QDate
 from background import AnimatedBackground
@@ -11,9 +11,22 @@ from review import ReviewPage
 from edit import EditMainMenu
 from edit import AddWordPage, EditRemovePage
 
+# برای دسترسی به DatabaseManager بدون ایجاد وابستگی دایره‌ای
+try:
+    from edit import DatabaseManager as EditDBManager
+    from review import DatabaseManager as ReviewDBManager
+except ImportError:
+    # اگر این import ها شکست خوردند، فرض می‌کنیم DatabaseManager را نداریم.
+    class EditDBManager:
+        def close(self): pass
+
+
+    class ReviewDBManager:
+        def close(self): pass
+
 
 # ------------------------------------------------------------------
-# **کلاس پنجره About (بدون تغییر)**
+# **کلاس پنجره About**
 # ------------------------------------------------------------------
 class AboutDialog(QDialog):
     def __init__(self, parent=None):
@@ -96,25 +109,23 @@ class MainWindow(QWidget):
         self.setWindowTitle("Flash Card App")
         self.resize(900, 600)
 
-        # پس‌زمینه متحرک
         self.bg = AnimatedBackground(self, count=35)
         self.bg.setGeometry(0, 0, self.width(), self.height())
         self.bg.lower()
 
-        # استک صفحات
         self.stack = QStackedWidget(self)
         self.main_menu = QWidget()
         self.main_menu.setStyleSheet("background: transparent;")
         self.stack.addWidget(self.main_menu)
 
         self.review_page = None
+
+        # EditMainMenu باید در ابتدا ساخته شود تا بتوانیم به صفحات داخلی آن (Add/Edit) دسترسی داشته باشیم.
         self.edit_menu = EditMainMenu(self)
         self.stack.addWidget(self.edit_menu)
 
-        # تنظیم منوی اصلی (شامل دکمه‌ها، تاریخ و About)
         self.setup_main_menu()
 
-        # لایه اصلی MainWindow فقط شامل Stack است
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.stack)
@@ -126,7 +137,7 @@ class MainWindow(QWidget):
         super().resizeEvent(event)
 
     def setup_main_menu(self):
-        # از QGridLayout برای قرار دادن اجزا در گوشه‌ها استفاده می‌کنیم
+        # استفاده از QGridLayout برای قرار دادن اجزا در گوشه‌ها
         menu_layout = QGridLayout(self.main_menu)
         menu_layout.setContentsMargins(20, 20, 20, 20)
 
@@ -135,7 +146,6 @@ class MainWindow(QWidget):
         date_label.setStyleSheet("color: rgba(255, 255, 255, 120); font-size: 16px; font-weight: bold;")
         date_label.setAlignment(Qt.AlignTop | Qt.AlignRight)
 
-        # اضافه کردن در ردیف 0، ستون 2 (بالا راست)
         menu_layout.addWidget(date_label, 0, 2, 1, 1, alignment=Qt.AlignTop | Qt.AlignRight)
 
         # -------------------- ۲. دکمه About (گوشه پایین چپ) --------------------
@@ -156,7 +166,6 @@ class MainWindow(QWidget):
         """)
         about_btn.clicked.connect(self.show_about_dialog)
 
-        # اضافه کردن در ردیف 2، ستون 0 (پایین چپ)
         menu_layout.addWidget(about_btn, 2, 0, 1, 1, alignment=Qt.AlignBottom | Qt.AlignLeft)
 
         # -------------------- ۳. منوی دکمه‌های اصلی (مرکز) --------------------
@@ -196,16 +205,14 @@ class MainWindow(QWidget):
             center_layout.addWidget(btn, alignment=Qt.AlignCenter)
             btn.clicked.connect(func)
 
-        # اضافه کردن کانتینر مرکزی به ردیف 1، ستون 1 (مرکز)
         menu_layout.addWidget(center_buttons_container, 1, 1, alignment=Qt.AlignCenter)
 
-        # تنظیم ستون‌ها و ردیف‌ها برای کشیده شدن
-        menu_layout.setColumnStretch(0, 1)  # فضای خالی چپ
-        menu_layout.setColumnStretch(1, 3)  # فضای دکمه‌ها
-        menu_layout.setColumnStretch(2, 1)  # فضای خالی راست
-        menu_layout.setRowStretch(0, 1)  # فضای خالی بالا
-        menu_layout.setRowStretch(1, 5)  # فضای دکمه‌ها
-        menu_layout.setRowStretch(2, 1)  # فضای خالی پایین
+        menu_layout.setColumnStretch(0, 1)
+        menu_layout.setColumnStretch(1, 3)
+        menu_layout.setColumnStretch(2, 1)
+        menu_layout.setRowStretch(0, 1)
+        menu_layout.setRowStretch(1, 5)
+        menu_layout.setRowStretch(2, 1)
 
     def show_about_dialog(self):
         """باز کردن پنجره About"""
@@ -214,23 +221,58 @@ class MainWindow(QWidget):
 
     def show_review(self):
         from review import ReviewPage
-        # حذف صفحه قبلی در صورت وجود (برای جلوگیری از انباشتگی در Stack)
+        # بستن و حذف صفحه قبلی اگر وجود داشت (برای جلوگیری از انباشتگی و بستن اتصال دیتابیس قبلی)
         if self.review_page:
+            self.close_review_page_db()
             self.stack.removeWidget(self.review_page)
+
         self.review_page = ReviewPage(self)
         self.stack.addWidget(self.review_page)
         self.stack.setCurrentWidget(self.review_page)
 
     def show_edit(self):
-        """نمایش صفحه مدیریت کلمات"""
+        # بستن اتصالات دیتابیس EditMenu قبلی
+        self.close_edit_menu_db()
+
+        # ساخت instance جدید از EditMainMenu برای اطمینان از اتصالات دیتابیس جدید
+        self.edit_menu = EditMainMenu(self)
+        self.stack.addWidget(self.edit_menu)
         self.stack.setCurrentWidget(self.edit_menu)
 
+    def close_review_page_db(self):
+        if self.review_page and hasattr(self.review_page, 'db'):
+            try:
+                self.review_page.db.close()
+            except Exception:
+                pass
+
+    def close_edit_menu_db(self):
+        """بستن اتصالات Edit/Add"""
+        if self.edit_menu:
+            if hasattr(self.edit_menu.add_page, 'db'):
+                try:
+                    self.edit_menu.add_page.db.close()
+                except Exception:
+                    pass
+            if hasattr(self.edit_menu.edit_page, 'db'):
+                try:
+                    self.edit_menu.edit_page.db.close()
+                except Exception:
+                    pass
+
+    def close_db_connections(self):
+        """بستن تمام اتصالات دیتابیس قبل از خروج برنامه"""
+        self.close_review_page_db()
+        self.close_edit_menu_db()
+
     def page_exit(self):
+        self.close_db_connections()  # بستن اتصالات قبل از خروج
         if hasattr(self.bg, "timer"):
             self.bg.timer.stop()
         self.close()
 
     def closeEvent(self, event):
+        self.close_db_connections()  # بستن اتصالات هنگام کلیک روی دکمه X
         if hasattr(self.bg, "timer"):
             self.bg.timer.stop()
         event.accept()

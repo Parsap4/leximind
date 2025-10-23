@@ -11,7 +11,21 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtSlot
 from PyQt5.QtGui import QColor, QFont, QKeySequence
 
-DB_PATH = "flash cards.db"
+import os
+import sys
+# ... بقیه ایمپورت‌ها را دست نزنید
+
+# این قسمت مسیر دیتابیس را برای حالت عادی و حالت PyInstaller تعریف می‌کند
+if getattr(sys, 'frozen', False):
+    # اگر برنامه در حالت EXE اجرا می‌شود، مسیر را از پوشه موقت PyInstaller بگیرید
+    base_path = sys._MEIPASS
+else:
+    # اگر برنامه به صورت عادی اجرا می‌شود، مسیر فعلی فایل را بگیرید
+    base_path = os.path.abspath(os.path.dirname(__file__))
+
+DB_PATH = os.path.join(base_path, "flash cards.db")
+
+# ... بقیه کد (مانند REVIEW_INTERVALS_DAYS)
 
 # فواصل تکرار بر اساس روز (Days)
 REVIEW_INTERVALS_DAYS = [1, 3, 7, 14, 30, 60, 120]

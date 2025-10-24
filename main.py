@@ -6,10 +6,83 @@ from PyQt5.QtWidgets import (
     QDialog, QLabel, QTextEdit, QGridLayout
 )
 from PyQt5.QtCore import Qt, QDate
-from background import AnimatedBackground
+from background import AnimatedBackground, AnimatedBackground2
 from review import ReviewPage
 from edit import EditMainMenu
 from edit import AddWordPage, EditRemovePage
+
+
+# import jdatetime # <--- دیگر از jdatetime استفاده نمی‌کنیم
+
+
+# ------------------------------------------------------------------
+# **توابع تبدیل تاریخ (تبدیل تقریبی میلادی به شمسی)**
+# ------------------------------------------------------------------
+
+def gregorian_to_jalali(gy, gm, gd):
+    """
+    تبدیل تاریخ میلادی به شمسی بدون استفاده از کتابخانه خارجی.
+    منبع: الگوریتم استاندارد (مانند الگوریتم Zeller یا تبدیل‌های مبتنی بر آفست)
+    """
+    g_days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    j_days_in_month = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, 29]
+
+    # تعیین سال کبیسه میلادی
+    if gy % 4 == 0 and (gy % 100 != 0 or gy % 400 == 0):
+        g_days_in_month[1] = 29
+
+    # محاسبه روزهای سپری شده از ابتدای سال میلادی
+    day_count = gd
+    for i in range(gm - 1):
+        day_count += g_days_in_month[i]
+
+    # آفست ثابت: روز شروع سال شمسی (مثلا ۳۰ مارس)
+    # 21 مارس (روز 80) شروع سال شمسی است.
+    # این عدد بستگی به سال میلادی و کبیسه بودن آن دارد.
+    if gy > 1996 and gy % 4 == 1:
+        day_count -= 79
+    else:
+        day_count -= 80
+
+    if day_count > 0:
+        jy = gy - 621
+    else:
+        day_count += 365 + (1 if gy % 4 == 0 and (gy % 100 != 0 or gy % 400 == 0) else 0)
+        jy = gy - 622
+
+    # تعیین سال کبیسه شمسی (برای سال‌های کبیسه دوره‌ای)
+    if jy % 4 == 3:  # هر 4 سال یکبار
+        j_days_in_month[11] = 30  # اسفند 30 روز
+
+    jm = 0
+    for i in range(12):
+        if day_count <= j_days_in_month[i]:
+            jm = i + 1
+            break
+        day_count -= j_days_in_month[i]
+
+    jd = day_count
+
+    return jy, jm, jd
+
+
+def format_jalali(year, month, day):
+    """قالب‌بندی تاریخ شمسی با استفاده از اعداد فارسی."""
+    PERSIAN_NUMERALS = "۰۱۲۳۴۵۶۷۸۹"
+
+    def to_persian(n):
+        s = str(n)
+        return "".join([PERSIAN_NUMERALS[int(d)] for d in s])
+
+    p_year = to_persian(year)
+    p_month = to_persian(month).zfill(2)
+    p_day = to_persian(day).zfill(2)
+
+    return f"{p_year}/{p_month}/{p_day}"
+
+
+# ------------------------------------------------------------------
+
 
 # برای دسترسی به DatabaseManager بدون ایجاد وابستگی دایره‌ای
 try:
@@ -29,11 +102,13 @@ except ImportError:
 # **کلاس پنجره About**
 # ------------------------------------------------------------------
 class AboutDialog(QDialog):
+    # ... (کلاس AboutDialog بدون تغییر)
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("About Flash Card App")
         self.resize(500, 350)
 
+        # استایل‌ها برای تم تیره
         self.setStyleSheet("""
             QDialog {
                 background-color: #2e2e2e;
@@ -109,9 +184,15 @@ class MainWindow(QWidget):
         self.setWindowTitle("Flash Card App")
         self.resize(900, 600)
 
+        # **تعریف و تنظیم پس‌زمینه‌ها**
         self.bg = AnimatedBackground(self, count=35)
+        self.bg2 = AnimatedBackground2(self, count=35)  # <-- پس‌زمینه دوم/روشن
+        self.current_theme = "dark"  # تم پیش‌فرض
+
         self.bg.setGeometry(0, 0, self.width(), self.height())
-        self.bg.lower()
+        self.bg2.setGeometry(0, 0, self.width(), self.height())
+        self.bg2.hide()  # پنهان کردن تم روشن در ابتدا
+        self.bg.lower()  # نمایش تم تیره (bg) در ابتدا
 
         self.stack = QStackedWidget(self)
         self.main_menu = QWidget()
@@ -133,7 +214,9 @@ class MainWindow(QWidget):
         self.stack.raise_()
 
     def resizeEvent(self, event):
+        # **تنظیم اندازه برای هر دو پس‌زمینه**
         self.bg.setGeometry(0, 0, self.width(), self.height())
+        self.bg2.setGeometry(0, 0, self.width(), self.height())
         super().resizeEvent(event)
 
     def setup_main_menu(self):
@@ -142,13 +225,59 @@ class MainWindow(QWidget):
         menu_layout.setContentsMargins(20, 20, 20, 20)
 
         # -------------------- ۱. واترمارک تاریخ (گوشه بالا راست) --------------------
-        date_label = QLabel(QDate.currentDate().toString("yyyy-MM-dd"))
-        date_label.setStyleSheet("color: rgba(255, 255, 255, 120); font-size: 16px; font-weight: bold;")
+        # **منطق نمایش تاریخ شمسی و میلادی با تبدیل دستی**
+        current_gregorian = QDate.currentDate()
+        gy = current_gregorian.year()
+        gm = current_gregorian.month()
+        gd = current_gregorian.day()
+
+        # تبدیل میلادی به شمسی
+        jy, jm, jd = gregorian_to_jalali(gy, gm, gd)
+
+        # قالب‌بندی تاریخ‌ها
+        gregorian_str = current_gregorian.toString("yyyy-MM-dd")  # میلادی با اعداد انگلیسی
+        # شمسی با اعداد فارسی
+        jalali_str = format_jalali(jy, jm, jd)
+
+        # ساخت متن نهایی (شمسی در بالا، میلادی در پایین)
+        date_text = f"{jalali_str}\n{gregorian_str}"
+
+        date_label = QLabel(date_text)
+
+        # **تنظیم فونت برای نمایش صحیح نویسه‌های فارسی**
+        date_label.setStyleSheet("""
+            color: rgba(255, 255, 255, 120);
+            font-size: 16px;
+            font-weight: bold;
+            font-family: 'Tahoma', 'B Nazanin', sans-serif;
+        """)
+
         date_label.setAlignment(Qt.AlignTop | Qt.AlignRight)
 
         menu_layout.addWidget(date_label, 0, 2, 1, 1, alignment=Qt.AlignTop | Qt.AlignRight)
 
-        # -------------------- ۲. دکمه About (گوشه پایین چپ) --------------------
+        # -------------------- ۲. دکمه Toggle Theme (گوشه بالا چپ) --------------------
+        theme_btn = QPushButton("🌙 Toggle Theme")
+        theme_btn.setFixedSize(160, 40)
+        theme_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                font-weight: 500;
+                color: #FFFFFF;
+                background-color: rgba(0, 0, 0, 160);
+                border: 1px solid #FFFFFF;
+                border-radius: 10px;
+            }
+            QPushButton:hover {
+                background-color: rgba(65, 105, 225, 150);
+            }
+        """)
+        theme_btn.clicked.connect(self.toggle_theme)
+
+        # **اضافه کردن دکمه در گوشه بالا چپ**
+        menu_layout.addWidget(theme_btn, 0, 0, 1, 1, alignment=Qt.AlignTop | Qt.AlignLeft)
+
+        # -------------------- ۳. دکمه About (گوشه پایین چپ) --------------------
         about_btn = QPushButton("ⓘ About")
         about_btn.setFixedSize(120, 40)
         about_btn.setStyleSheet("""
@@ -168,7 +297,7 @@ class MainWindow(QWidget):
 
         menu_layout.addWidget(about_btn, 2, 0, 1, 1, alignment=Qt.AlignBottom | Qt.AlignLeft)
 
-        # -------------------- ۳. منوی دکمه‌های اصلی (مرکز) --------------------
+        # -------------------- ۴. منوی دکمه‌های اصلی (مرکز) --------------------
         center_buttons_container = QWidget()
         center_layout = QVBoxLayout(center_buttons_container)
         center_layout.setAlignment(Qt.AlignCenter)
@@ -219,6 +348,23 @@ class MainWindow(QWidget):
         dialog = AboutDialog(self)
         dialog.exec_()
 
+    def toggle_theme(self):
+        """جابجایی بین تم تیره (bg) و تم روشن (bg2)"""
+        # اگر تم فعلی تیره است، به روشن سوییچ کن
+        if self.current_theme == "dark":
+            self.bg.hide()
+            self.bg2.show()
+            self.bg2.lower()
+            self.current_theme = "light"
+        # اگر تم فعلی روشن است، به تیره سوییچ کن
+        else:
+            self.bg2.hide()
+            self.bg.show()
+            self.bg.lower()
+            self.current_theme = "dark"
+        # مطمئن شو که stack در بالاترین لایه قرار دارد
+        self.stack.raise_()
+
     def show_review(self):
         from review import ReviewPage
         # بستن و حذف صفحه قبلی اگر وجود داشت (برای جلوگیری از انباشتگی و بستن اتصال دیتابیس قبلی)
@@ -267,14 +413,20 @@ class MainWindow(QWidget):
 
     def page_exit(self):
         self.close_db_connections()  # بستن اتصالات قبل از خروج
+        # **توقف تایمرهای هر دو پس‌زمینه**
         if hasattr(self.bg, "timer"):
             self.bg.timer.stop()
+        if hasattr(self.bg2, "timer"):
+            self.bg2.timer.stop()
         self.close()
 
     def closeEvent(self, event):
         self.close_db_connections()  # بستن اتصالات هنگام کلیک روی دکمه X
+        # **توقف تایمرهای هر دو پس‌زمینه**
         if hasattr(self.bg, "timer"):
             self.bg.timer.stop()
+        if hasattr(self.bg2, "timer"):
+            self.bg2.timer.stop()
         event.accept()
 
 

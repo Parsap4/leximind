@@ -13,6 +13,7 @@ from PyQt5.QtGui import QColor, QFont, QKeySequence
 
 import os
 import sys
+
 # ... بقیه ایمپورت‌ها را دست نزنید
 
 # این قسمت مسیر دیتابیس را برای حالت عادی و حالت PyInstaller تعریف می‌کند
@@ -24,8 +25,6 @@ else:
     base_path = os.path.abspath(os.path.dirname(__file__))
 
 DB_PATH = os.path.join(base_path, "flash cards.db")
-
-# ... بقیه کد (مانند REVIEW_INTERVALS_DAYS)
 
 # فواصل تکرار بر اساس روز (Days)
 REVIEW_INTERVALS_DAYS = [1, 3, 7, 14, 30, 60, 120]
@@ -41,19 +40,76 @@ class DatabaseManager:
     def __init__(self):
         self.conn = sqlite3.connect(DB_PATH)
         self.cursor = self.conn.cursor()
+        self.create_settings_table()  # ایجاد جدول تنظیمات
+
+    # -------------------- متدهای جدید برای تنظیمات --------------------
+    def create_settings_table(self):
+        """ایجاد جدول 'settings' اگر وجود نداشته باشد."""
+        # این جدول فقط یک ردیف برای ذخیره آخرین تنظیمات خواهد داشت
+        self.cursor.execute("""
+                            CREATE TABLE IF NOT EXISTS settings
+                            (
+                                id
+                                INTEGER
+                                PRIMARY
+                                KEY,
+                                num_cards
+                                INTEGER,
+                                show_time
+                                INTEGER,
+                                card_side
+                                TEXT
+                            )
+                            """)
+        self.conn.commit()
+
+    def load_settings(self):
+        """بارگذاری تنظیمات ذخیره‌شده یا بازگرداندن مقادیر پیش‌فرض."""
+        self.cursor.execute("SELECT num_cards, show_time, card_side FROM settings WHERE id = 1")
+        row = self.cursor.fetchone()
+
+        # مقادیر پیش‌فرض
+        default_settings = {
+            'num_cards': 10,
+            'show_time': 3,
+            'card_side': "front"
+        }
+
+        if row:
+            # اگر تنظیمات ذخیره‌شده وجود دارد
+            return {
+                'num_cards': row[0],
+                'show_time': row[1],
+                'card_side': row[2]
+            }
+
+        # اگر تنظیمات وجود ندارد، با پیش‌فرض شروع کن
+        self.save_settings(default_settings['num_cards'], default_settings['show_time'], default_settings['card_side'])
+        return default_settings
+
+    def save_settings(self, num_cards, show_time, card_side):
+        """ذخیره تنظیمات فعلی در دیتابیس."""
+        # همیشه ردیف 1 را به‌روزرسانی/جایگزین می‌کند
+        self.cursor.execute("""
+            INSERT OR REPLACE INTO settings (id, num_cards, show_time, card_side)
+            VALUES (1, ?, ?, ?)
+        """, (num_cards, show_time, card_side))
+        self.conn.commit()
+
+    # ------------------------------------------------------------------
 
     def get_cards_for_review(self, num_cards):
         """
         بازیابی کارت‌ها برای مرور: کلماتی که تاریخ مرور آن‌ها گذشته یا امروز است.
-        خروجی: (words, meaning, code, review_intervals, count, last_time_review)
+        خروجی: (words, meaning, code, review_intervals, count, next_time_review)
         """
         today = datetime.now().strftime("%Y-%m-%d 23:59:59")
 
         query = """
-                SELECT words, meaning, code, review_intervals, count, last_time_review
+                SELECT words, meaning, code, review_intervals, count, next_time_review
                 FROM my_table
-                WHERE last_time_review <= ? \
-                   OR last_time_review IS NULL
+                WHERE next_time_review <= ? \
+                   OR next_time_review IS NULL
                 ORDER BY review_intervals ASC LIMIT ? \
                 """
         self.cursor.execute(query, (today, num_cards,))
@@ -93,7 +149,7 @@ class DatabaseManager:
                                 UPDATE my_table
                                 SET review_intervals = ?,
                                     count            = ?,
-                                    last_time_review = ?
+                                    next_time_review = ?
                                 WHERE code = ?
                                 """, (final_interval, new_count, next_review_date, code))
             self.conn.commit()
@@ -107,7 +163,7 @@ class DatabaseManager:
 
 
 # ──────────────────────────────────────────────
-# صفحه تنظیمات Review
+# صفحه تنظیمات Review (با منطق ذخیره‌سازی اصلاح‌شده)
 # ──────────────────────────────────────────────
 class ReviewPage(QWidget):
     """صفحه‌ی Review (فرم تنظیمات)"""
@@ -115,7 +171,16 @@ class ReviewPage(QWidget):
     def __init__(self, main_window):
         super().__init__()
         self.main_window = main_window
+        self.db = DatabaseManager()
         self.setup_ui()
+        self.load_settings_to_ui()
+
+    def load_settings_to_ui(self):
+        """تنظیمات ذخیره‌شده را در فیلدهای فرم بارگذاری می‌کند."""
+        settings = self.db.load_settings()
+        self.num_cards.setValue(settings['num_cards'])
+        self.show_time.setValue(settings['show_time'])
+        self.card_side.setCurrentText(settings['card_side'])
 
     def setup_ui(self):
         self.setStyleSheet("background: transparent;")
@@ -146,6 +211,9 @@ class ReviewPage(QWidget):
         # استایل برای Labelها در فرم
         label_style = "color: #D3D3D3; font-size: 18px; font-weight: 600;"
 
+        # **استایل جدید برای Captionها (بهبود یافته)**
+        caption_style = "color: #B0C4DE; font-size: 15px; margin-top: 5px; font-weight: 400;"
+
         # استایل برای Inputها و SpinBoxها
         input_style = """
             QSpinBox, QComboBox {
@@ -173,27 +241,53 @@ class ReviewPage(QWidget):
         form_layout.setLabelAlignment(Qt.AlignLeft)
         form_layout.setSpacing(15)
 
+        # === 1. تعداد کارت‌ها ===
         self.num_cards = QSpinBox()
         self.num_cards.setRange(1, 10000)
-        self.num_cards.setValue(10)
         self.num_cards.setFixedWidth(220)
         self.num_cards.setStyleSheet(input_style)
 
+        num_cards_widget = QVBoxLayout()
+        num_cards_widget.addWidget(self.num_cards)
+        # کپشن بهبودیافته
+        caption_num_cards = QLabel("Specify the maximum number of cards to be reviewed in this session.")
+        caption_num_cards.setStyleSheet(caption_style)
+        num_cards_widget.addWidget(caption_num_cards)
+
+        form_layout.addRow(QLabel("Number of cards:").setStyleSheet(label_style), num_cards_widget)
+
+        # === 2. زمان نمایش ===
         self.show_time = QSpinBox()
         self.show_time.setRange(0, 600)  # 0 برای حالت دستی
-        self.show_time.setValue(3)
         self.show_time.setFixedWidth(220)
         self.show_time.setStyleSheet(input_style)
         self.show_time.setSuffix(" seconds (0=Manual)")
 
+        show_time_widget = QVBoxLayout()
+        show_time_widget.addWidget(self.show_time)
+        # کپشن بهبودیافته
+        caption_show_time = QLabel(
+            "Set the display duration (in seconds) for the first side. **0** enables manual flipping.")
+        caption_show_time.setStyleSheet(caption_style)
+        show_time_widget.addWidget(caption_show_time)
+
+        form_layout.addRow(QLabel("Show time:").setStyleSheet(label_style), show_time_widget)
+
+        # === 3. سمت شروع ===
         self.card_side = QComboBox()
         self.card_side.addItems(["front", "back"])
         self.card_side.setFixedWidth(220)
         self.card_side.setStyleSheet(input_style)
 
-        form_layout.addRow(QLabel("Number of cards:").setStyleSheet(label_style), self.num_cards)
-        form_layout.addRow(QLabel("Show time:").setStyleSheet(label_style), self.show_time)
-        form_layout.addRow(QLabel("Card side:").setStyleSheet(label_style), self.card_side)
+        card_side_widget = QVBoxLayout()
+        card_side_widget.addWidget(self.card_side)
+        # کپشن بهبودیافته
+        caption_card_side = QLabel(
+            "Select the side that appears first (e.g., **front** for question, **back** for answer).")
+        caption_card_side.setStyleSheet(caption_style)
+        card_side_widget.addWidget(caption_card_side)
+
+        form_layout.addRow(QLabel("Card side:").setStyleSheet(label_style), card_side_widget)
         center_layout.addWidget(form_widget)
 
         main_layout.addStretch(1)
@@ -202,13 +296,54 @@ class ReviewPage(QWidget):
 
         # ───── دکمه‌ها ─────
         bottom_layout = QHBoxLayout()
+
+        # دکمه ذخیره
+        save_btn = self.create_save_button()
+
         back_btn = self.create_back_button()
         start_btn = self.start_review_button()
 
         bottom_layout.addWidget(back_btn, alignment=Qt.AlignLeft)
+        bottom_layout.addWidget(save_btn, alignment=Qt.AlignLeft)
         bottom_layout.addStretch(1)
         bottom_layout.addWidget(start_btn, alignment=Qt.AlignRight)
         main_layout.addLayout(bottom_layout)
+
+    # متد ساخت دکمه ذخیره
+    def create_save_button(self):
+        btn = QPushButton("Save Settings")
+        btn.setFixedSize(160, 50)
+        btn.setStyleSheet("""
+            QPushButton {
+                font-size: 18px;
+                font-weight: 600;
+                color: #FFFFFF; 
+                background-color: #5F9EA0; /* Cadet Blue */
+                border: 1px solid #FFFFFF;
+                border-radius: 10px;
+                margin-left: 20px;
+            }
+            QPushButton:hover {
+                background-color: #4682B4; /* Steel Blue */
+            }
+        """)
+        btn.clicked.connect(self.save_settings)
+        return btn
+
+    # 🌟 جدید: متد خصوصی برای ذخیره تنظیمات بدون پیام
+    def _save_settings_to_db(self):
+        """مقادیر فیلدها را در دیتابیس ذخیره می‌کند (بدون نمایش پیام)."""
+        num = self.num_cards.value()
+        t = self.show_time.value()
+        side = self.card_side.currentText()
+
+        self.db.save_settings(num, t, side)
+
+    # 🌟 متد ذخیره تنظیمات (فقط برای دکمه Save)
+    def save_settings(self):
+        """مقادیر فیلدها را در دیتابیس ذخیره کرده و پیام موفقیت نمایش می‌دهد."""
+        self._save_settings_to_db()
+        QMessageBox.information(self, "Settings Saved", "Review settings have been saved successfully!")
 
     def create_back_button(self):
         btn = QPushButton("← Back")
@@ -253,7 +388,11 @@ class ReviewPage(QWidget):
         btn.clicked.connect(self.start_review)
         return btn
 
+    # 🌟 متد شروع مرور (بدون نمایش پیام)
     def start_review(self):
+        # تنظیمات را بدون نمایش پیام ذخیره کن تا آخرین مقادیر استفاده شوند.
+        self._save_settings_to_db()
+
         num = self.num_cards.value()
         t = self.show_time.value()
         side = self.card_side.currentText()
@@ -274,7 +413,7 @@ class CardViewerPage(QWidget):
         self.show_time = show_time
         self.side = side
 
-        # کارت‌ها شامل: (word, meaning, code, interval, count, last_time_review)
+        # کارت‌ها شامل: (word, meaning, code, interval, count, next_time_review)
         self.cards = []
         self.current_index = 0
         self.showing_front = (self.side == "front")
@@ -298,7 +437,7 @@ class CardViewerPage(QWidget):
             if self.show_time > 0:
                 self.main_timer.start(self.show_time * 1000)
         else:
-            QMessageBox.information(self, "No Cards", "No cards found for review.")
+            QMessageBox.information(self, "No Cards", "No cards found for review. Returning to main menu.")
             self.main_window.stack.setCurrentWidget(self.main_window.main_menu)
 
     def load_cards(self):
@@ -476,7 +615,7 @@ class CardViewerPage(QWidget):
             return
 
         # استخراج ۶ ستون
-        word, meaning, code, interval, count, last_time_review = self.cards[self.current_index]
+        word, meaning, code, interval, count, next_time_review = self.cards[self.current_index]
 
         # محتوا و جهت‌دهی
         self.card_english.setText(word)
@@ -497,8 +636,8 @@ class CardViewerPage(QWidget):
 
         # نمایش اطلاعات SRS
         next_review_display = "Review Today"
-        if last_time_review and last_time_review != 'None':
-            next_review_display = f"Next Due: {last_time_review.split()[0]}"
+        if next_time_review and next_time_review != 'None':
+            next_review_display = f"Next Due: {next_time_review.split()[0]}"
 
         # نمایش Progress بر اساس REVIEW_THRESHOLD (Count-down)
         self.stats_label.setText(
@@ -575,7 +714,7 @@ class CardViewerPage(QWidget):
 
             # به‌روزرسانی لیست داخلی (Fetch مجدد) برای نمایش آمار جدید در کارت بعدی
             new_data = self.db.cursor.execute("""
-                                              SELECT words, meaning, code, review_intervals, count, last_time_review
+                                              SELECT words, meaning, code, review_intervals, count, next_time_review
                                               FROM my_table
                                               WHERE code = ?
                                               """, (code,)).fetchone()
@@ -594,16 +733,26 @@ class CardViewerPage(QWidget):
     def _advance_card(self):
         """
         فقط حرکت به کارت بعدی. این متد آمار SRS را دستکاری نمی‌کند.
+        اگر به انتهای لیست رسید، به منوی اصلی برگردد.
         """
         if not self.cards:
             return
 
         # برو به کارت بعدی
-        self.current_index = (self.current_index + 1) % len(self.cards)
+        next_index = self.current_index + 1
 
-        # تایمرها رو متوقف کن
+        # توقف تایمرها
         self.main_timer.stop()
         self.flip_timer.stop()
+
+        if next_index >= len(self.cards):
+            # اتمام مرور
+            QMessageBox.information(self, "Review Complete",
+                                    f"Review session for {len(self.cards)} cards has been completed! Returning to main menu.")
+            self.go_back_to_menu()
+            return
+
+        self.current_index = next_index
 
         # وقتی کارت بعدی میاد، از تنظیم اولیه side پیروی کن
         self.showing_front = (self.side == "front")

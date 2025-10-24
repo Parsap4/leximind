@@ -42,7 +42,7 @@ class DatabaseManager:
         next_review_date = (datetime.now()).strftime("%Y-%m-%d 00:00:00")
         try:
             self.cursor.execute("""
-                                INSERT INTO my_table (code, words, meaning, review_intervals, count, last_time_review)
+                                INSERT INTO my_table (code, words, meaning, review_intervals, count, next_time_review)
                                 VALUES (?, ?, ?, ?, ?, ?)
                                 """, (code, word, meaning, 1, initial_count, next_review_date))
             # **تضمین Commit:** ذخیره فوری تغییرات در دیسک
@@ -66,7 +66,7 @@ class DatabaseManager:
         """جستجوی کلمه یا معنی"""
         q = f"%{query.lower()}%"
         self.cursor.execute("""
-                            SELECT code, words, meaning, review_intervals, count, last_time_review
+                            SELECT code, words, meaning, review_intervals, count, next_time_review
                             FROM my_table
                             WHERE LOWER(words) LIKE ?
                                OR LOWER(meaning) LIKE ?
@@ -76,7 +76,7 @@ class DatabaseManager:
     def get_all_words(self):
         """دریافت تمام رکوردها"""
         self.cursor.execute("""
-                            SELECT code, words, meaning, review_intervals, count, last_time_review
+                            SELECT code, words, meaning, review_intervals, count, next_time_review
                             FROM my_table
                             ORDER BY code
                             """)
@@ -90,7 +90,7 @@ class DatabaseManager:
                                 meaning          = ?,
                                 review_intervals = ?,
                                 count            = ?,
-                                last_time_review = ?
+                                next_time_review = ?
                             WHERE code = ?
                             """, (word, meaning, interval, count, last_time, code))
         # **تضمین Commit:** ذخیره فوری تغییرات در دیسک
@@ -304,7 +304,7 @@ class EditRemovePage(QWidget):
 
         self.table = QTableWidget()
         self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["Code", "Word", "Meaning", "Interval", "Count", "Last Review"])
+        self.table.setHorizontalHeaderLabels(["Code", "Word", "Meaning", "Interval", "Count", "Next Review"])
 
         self.table.setStyleSheet("""
             QTableWidget {
